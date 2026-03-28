@@ -1,0 +1,361 @@
+<mat-toolbar class="app-toolbar">
+  <div class="brand">
+    <img class="brand-logo" src="logo-corner-cut-mark.svg" alt="OneProxy logo" />
+    <div class="brand-copy">
+      <span class="brand-title">OneProxy</span>
+      <span class="brand-subtitle">Personal Drive Library</span>
+    </div>
+  </div>
+
+  <span class="toolbar-spacer"></span>
+
+  <button mat-stroked-button type="button" [disabled]="isConnecting()" (click)="connectGoogle()">
+    <mat-icon>login</mat-icon>
+    {{ connectButtonLabel() }}
+  </button>
+</mat-toolbar>
+
+<main class="page-shell">
+  <input
+    #proxyFileInput
+    type="file"
+    accept="image/*"
+    class="hidden-file-input"
+    (change)="onProxyFileSelected($event)"
+  />
+  <input
+    #attachmentFileInput
+    type="file"
+    multiple
+    class="hidden-file-input"
+    (change)="onAttachmentFilesSelected($event)"
+  />
+
+  <section class="dashboard-shell">
+    <div class="dashboard-copy">
+      <p class="eyebrow">Library</p>
+      <h1>Manage your proxy library in Drive.</h1>
+      <p class="hero-text">
+        Upload proxy artwork, attach extra files, and keep the card library synced from your own
+        Google Drive storage.
+      </p>
+      @if (!isGoogleConfigured()) {
+        <p class="status-banner status-banner-warning">
+          Add your OAuth web client ID in `src/app/google-auth.config.ts` before connecting.
+        </p>
+      } @else if (googleErrorMessage()) {
+        <p class="status-banner status-banner-error">{{ googleErrorMessage() }}</p>
+      } @else if (saveMessage()) {
+        <p class="status-banner status-banner-neutral">{{ saveMessage() }}</p>
+      }
+    </div>
+
+    <div class="stats-grid">
+      <mat-card appearance="outlined" class="summary-card">
+        <mat-card-content>
+          <p class="summary-label">Proxies</p>
+          @if (isLibraryLoading()) {
+            <div class="summary-skeleton"></div>
+          } @else {
+            <p class="summary-value">{{ indexItemCount() }}</p>
+          }
+        </mat-card-content>
+      </mat-card>
+
+      <mat-card appearance="outlined" class="summary-card">
+        <mat-card-content>
+          <p class="summary-label">Storage Used</p>
+          @if (isLibraryLoading() || areMetricsLoading()) {
+            <div class="summary-skeleton"></div>
+          } @else {
+            <p class="summary-value">{{ totalStorageLabel() }}</p>
+          }
+        </mat-card-content>
+      </mat-card>
+
+      <mat-card appearance="outlined" class="summary-card">
+        <mat-card-content>
+          <p class="summary-label">Drive Status</p>
+          <p class="summary-value summary-value-small">{{ driveStatus() }}</p>
+          <p class="summary-copy">{{ driveMessage() }}</p>
+        </mat-card-content>
+      </mat-card>
+    </div>
+  </section>
+
+  <section class="workspace-panel">
+    <div class="controls">
+      <mat-form-field appearance="outline" class="search-field">
+        <mat-label>Search proxies</mat-label>
+        <input
+          matInput
+          [value]="searchQuery()"
+          (input)="setSearchQuery($any($event.target).value)"
+          placeholder="Name or tag"
+        />
+        <mat-icon matSuffix>search</mat-icon>
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="filter-field">
+        <mat-label>Filter</mat-label>
+        <mat-select [value]="filterValue()" (valueChange)="setFilterValue($event)">
+          <mat-option value="all">All items</mat-option>
+          <mat-option value="starter">Starter</mat-option>
+          <mat-option value="red">Red</mat-option>
+          <mat-option value="blue">Blue</mat-option>
+          <mat-option value="green">Green</mat-option>
+          <mat-option value="foil">Foil</mat-option>
+        </mat-select>
+      </mat-form-field>
+
+      <button mat-flat-button type="button" class="new-proxy-button" (click)="openCreateProxyFlow()">
+        <mat-icon>upload</mat-icon>
+        New Proxy
+      </button>
+    </div>
+
+    @if (createFlowOpen()) {
+      <mat-card appearance="outlined" class="composer-card">
+        <mat-card-header>
+          <mat-card-title>{{ editorTitle() }}</mat-card-title>
+          <mat-card-subtitle>{{ editorSubtitle() }}</mat-card-subtitle>
+        </mat-card-header>
+        <mat-card-content>
+          <div class="composer-layout">
+            <div class="draft-preview">
+              @if (createDraft().imagePreviewUrl) {
+                <img [src]="createDraft().imagePreviewUrl!" [alt]="createDraft().sourceFileName" />
+              } @else {
+                <span>Current image kept</span>
+              }
+            </div>
+
+            <div class="composer-fields">
+              <div class="composer-file-row">
+                <div>
+                  <p class="composer-file-label">
+                    {{ editorMode() === 'create' ? 'Selected image' : 'Image source' }}
+                  </p>
+                  <p class="composer-file-name">
+                    {{ createDraft().sourceFileName || 'Keep the current stored image' }}
+                  </p>
+                </div>
+                @if (editorMode() === 'edit') {
+                  <button mat-stroked-button type="button" (click)="selectReplacementImage()">
+                    <mat-icon>image</mat-icon>
+                    Replace Image
+                  </button>
+                }
+              </div>
+
+              <div class="composer-grid">
+                <mat-form-field appearance="outline" class="composer-id">
+                  <mat-label>Item ID</mat-label>
+                  <input
+                    matInput
+                    [value]="createDraft().id"
+                    (input)="setDraftId($any($event.target).value)"
+                    placeholder="OP01-001-sp"
+                  />
+                </mat-form-field>
+
+                <mat-form-field appearance="outline" class="composer-name">
+                  <mat-label>Name</mat-label>
+                  <input
+                    matInput
+                    [value]="createDraft().name"
+                    (input)="setDraftName($any($event.target).value)"
+                    placeholder="Luffy Starter Proxy"
+                  />
+                </mat-form-field>
+
+                <mat-form-field appearance="outline" class="composer-tags">
+                  <mat-label>Tags</mat-label>
+                  <mat-chip-grid #tagGrid aria-label="Proxy tags">
+                    @for (tag of createDraft().tags; track tag) {
+                      <mat-chip-row (removed)="removeDraftTag(tag)">
+                        {{ tag }}
+                        <button matChipRemove [attr.aria-label]="'Remove ' + tag">
+                          <mat-icon>cancel</mat-icon>
+                        </button>
+                      </mat-chip-row>
+                    }
+                  </mat-chip-grid>
+                  <input
+                    matInput
+                    [matChipInputFor]="tagGrid"
+                    [matChipInputSeparatorKeyCodes]="tagSeparatorKeys"
+                    [matChipInputAddOnBlur]="true"
+                    [value]="createDraft().tagInputValue"
+                    (input)="setTagInputValue($any($event.target).value)"
+                    (matChipInputTokenEnd)="addDraftTag($event.value)"
+                    placeholder="Type a tag and press Enter or comma"
+                  />
+                </mat-form-field>
+              </div>
+
+              <div class="attachments-panel">
+                <div class="attachments-header">
+                  <div>
+                    <p class="composer-file-label">Additional files</p>
+                    <p class="attachments-copy">
+                      Add any extra files to the item folder. Duplicate names and reserved names are
+                      rejected.
+                    </p>
+                  </div>
+                  <button mat-stroked-button type="button" (click)="openAttachmentPicker()">
+                    <mat-icon>attach_file</mat-icon>
+                    Add Files
+                  </button>
+                </div>
+
+                @if (editorMode() === 'edit') {
+                  @if (isLoadingExistingAttachments()) {
+                    <p class="attachments-count">Loading existing files...</p>
+                  } @else if (existingAttachments().length > 0) {
+                    <p class="attachments-count">{{ existingAttachmentCountLabel() }}</p>
+                    <div class="attachments-list">
+                      @for (attachment of existingAttachments(); track attachment.id) {
+                        <div class="attachment-row">
+                          <div>
+                            <p class="attachment-name">{{ attachment.name }}</p>
+                            <p class="attachment-size">{{ attachment.sizeLabel }}</p>
+                          </div>
+                          <div class="attachment-actions">
+                            <span class="attachment-status">Already saved</span>
+                            <button
+                              mat-stroked-button
+                              type="button"
+                              (click)="removeExistingAttachment(attachment.id)"
+                            >
+                              <mat-icon>delete</mat-icon>
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      }
+                    </div>
+                  }
+                }
+
+                @if (createDraft().attachments.length > 0) {
+                  <p class="attachments-count">{{ attachmentCountLabel() }}</p>
+                  <div class="attachments-list">
+                    @for (attachment of createDraft().attachments; track attachment.name) {
+                      <div class="attachment-row">
+                        <div>
+                          <p class="attachment-name">{{ attachment.name }}</p>
+                          <p class="attachment-size">{{ attachment.sizeLabel }}</p>
+                        </div>
+                        <button
+                          mat-stroked-button
+                          type="button"
+                          (click)="removeAttachment(attachment.name)"
+                        >
+                          <mat-icon>close</mat-icon>
+                          Remove
+                        </button>
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+
+              <p class="composer-help">{{ saveMessage() }}</p>
+
+              <div class="composer-actions">
+                <button mat-stroked-button type="button" (click)="cancelCreateProxy()">
+                  Cancel
+                </button>
+                <button mat-flat-button type="button" [disabled]="!canSaveProxy()" (click)="saveProxy()">
+                  <mat-icon>{{ editorMode() === 'create' ? 'cloud_upload' : 'save' }}</mat-icon>
+                  {{ saveButtonLabel() }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </mat-card-content>
+      </mat-card>
+    }
+
+    <div class="library-grid">
+      @if (isLibraryLoading()) {
+        @for (skeleton of [1, 2, 3, 4]; track skeleton) {
+          <mat-card appearance="outlined" class="library-card skeleton-card">
+            <div class="card-preview skeleton-block"></div>
+            <mat-card-content>
+              <div class="skeleton-line skeleton-line-wide"></div>
+              <div class="skeleton-line"></div>
+              <div class="skeleton-chip-row">
+                <span class="skeleton-chip"></span>
+                <span class="skeleton-chip"></span>
+              </div>
+            </mat-card-content>
+          </mat-card>
+        }
+      } @else if (filteredItems().length === 0) {
+        <mat-card appearance="outlined" class="empty-card">
+          <mat-card-content>
+            <p class="empty-title">No library items yet</p>
+            <p class="empty-copy">
+              Click `New Proxy`, choose an image, review the parsed fields, and save it to Drive.
+            </p>
+          </mat-card-content>
+        </mat-card>
+      } @else {
+        @for (item of filteredItems(); track item.id) {
+          <mat-card appearance="outlined" class="library-card">
+            <div class="card-preview">
+              @if (item.imagePreviewUrl) {
+                <img [src]="item.imagePreviewUrl" [alt]="item.name" />
+              } @else {
+                <span>{{ item.name }}</span>
+              }
+            </div>
+            <mat-card-content>
+              <div class="card-body">
+                <div class="card-meta">
+                  <h2>{{ item.name }}</h2>
+                  <p class="card-size">
+                    @if (item.isLoadingMetrics) {
+                      Calculating size...
+                    } @else {
+                      {{ item.storageLabel }} · {{ item.fileCount }} file{{ item.fileCount === 1 ? '' : 's' }}
+                    }
+                  </p>
+                </div>
+              </div>
+              <mat-chip-set>
+                @for (tag of item.tags; track tag) {
+                  <mat-chip>{{ tag }}</mat-chip>
+                }
+              </mat-chip-set>
+              <div class="card-actions">
+                <button
+                  mat-stroked-button
+                  type="button"
+                  class="card-action-button"
+                  [disabled]="item.isDeleting"
+                  (click)="openEditProxyFlow(item.id)"
+                >
+                  <mat-icon>edit</mat-icon>
+                  Edit
+                </button>
+                <button
+                  mat-stroked-button
+                  type="button"
+                  class="card-action-button card-action-danger"
+                  [disabled]="item.isDeleting"
+                  (click)="deleteProxy(item.id)"
+                >
+                  <mat-icon>delete</mat-icon>
+                  {{ item.isDeleting ? 'Deleting...' : 'Delete' }}
+                </button>
+              </div>
+            </mat-card-content>
+          </mat-card>
+        }
+      }
+    </div>
+  </section>
+</main>
