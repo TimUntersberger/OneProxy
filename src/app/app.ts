@@ -1,10 +1,10 @@
 import { CommonModule } from '@angular/common';
 import { COMMA, ENTER } from '@angular/cdk/keycodes';
-import { Component, ElementRef, ViewChild, computed, inject, signal } from '@angular/core';
+import { Component, ElementRef, OnInit, TemplateRef, ViewChild, computed, inject, signal } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatChipsModule } from '@angular/material/chips';
-import { MatDialog, MatDialogModule } from '@angular/material/dialog';
+import { MatDialog, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
@@ -54,6 +54,8 @@ interface LibraryCardItem {
   tags: string[];
   imagePreviewUrl: string | null;
   isDeleting: boolean;
+  isLoadingPreview: boolean;
+  isOpeningFolder: boolean;
   storageLabel: string;
   fileCount: number;
   isLoadingMetrics: boolean;
@@ -77,13 +79,15 @@ interface LibraryCardItem {
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
-export class App {
+export class App implements OnInit {
   @ViewChild('proxyFileInput') private readonly proxyFileInput?: ElementRef<HTMLInputElement>;
   @ViewChild('attachmentFileInput')
   private readonly attachmentFileInput?: ElementRef<HTMLInputElement>;
+  @ViewChild('proxyEditorDialog') private readonly proxyEditorDialog?: TemplateRef<unknown>;
 
   protected readonly tagSeparatorKeys = [ENTER, COMMA] as const;
   private filePickerMode: 'create' | 'replace' = 'create';
+  private editorDialogRef: MatDialogRef<unknown> | null = null;
 
   private readonly googleAuthService = inject(GoogleAuthService);
   private readonly googleDriveService = inject(GoogleDriveService);
@@ -93,6 +97,7 @@ export class App {
   protected readonly filterValue = signal('all');
   protected readonly googleConnectionState = this.googleAuthService.connectionState;
   protected readonly googleErrorMessage = this.googleAuthService.errorMessage;
+  protected readonly googleProfile = this.googleAuthService.profile;
   protected readonly grantedScopes = this.googleAuthService.grantedScopes;
   protected readonly isGoogleConfigured = this.googleAuthService.isConfigured;
   protected readonly hasAuthorizedBefore = this.googleAuthService.hasAuthorizedBefore;
@@ -108,6 +113,7 @@ export class App {
   protected readonly itemMetrics = signal<Record<string, DriveItemMetrics>>({});
   protected readonly isLibraryLoading = signal(false);
   protected readonly areMetricsLoading = signal(false);
+  protected readonly arePreviewsLoading = signal(false);
   protected readonly isSavingProxy = signal(false);
   protected readonly saveMessage = signal('Choose an image to start creating a proxy.');
   protected readonly createFlowOpen = signal(false);
@@ -119,17 +125,22 @@ export class App {
   protected readonly isLoadingExistingAttachments = signal(false);
   protected readonly itemPreviewUrls = signal<Record<string, string>>({});
   protected readonly deletingItemIds = signal<string[]>([]);
+  protected readonly openingFolderItemIds = signal<string[]>([]);
 
   protected readonly libraryItems = computed<LibraryCardItem[]>(() => {
     const previewUrls = this.itemPreviewUrls();
     const deletingItemIds = this.deletingItemIds();
+    const openingFolderItemIds = this.openingFolderItemIds();
     const metrics = this.itemMetrics();
     const areMetricsLoading = this.areMetricsLoading();
+    const arePreviewsLoading = this.arePreviewsLoading();
 
     return (this.indexRecord()?.items ?? []).map((item) => ({
       ...item,
       imagePreviewUrl: previewUrls[item.id] ?? null,
       isDeleting: deletingItemIds.includes(item.id),
+      isLoadingPreview: arePreviewsLoading && !previewUrls[item.id],
+      isOpeningFolder: openingFolderItemIds.includes(item.id),
       storageLabel: this.formatFileSize(metrics[item.id]?.totalBytes ?? 0),
       fileCount: metrics[item.id]?.fileCount ?? 0,
       isLoadingMetrics: areMetricsLoading && !metrics[item.id],
@@ -216,6 +227,12 @@ export class App {
     () => this.indexStatus() === 'ready' || this.googleConnectionState() === 'connected',
   );
 
+  ngOnInit(): void {
+    queueMicrotask(() => {
+      void this.connectGoogleAndDrive();
+    });
+  }
+
   protected setSearchQuery(value: string): void {
     this.searchQuery.set(value);
   }
@@ -262,7 +279,7 @@ export class App {
       tagInputValue: '',
       attachments: [],
     });
-    this.createFlowOpen.set(true);
+    this.openEditorDialog();
     this.saveMessage.set('Update the fields, add any attachments, and optionally replace the image.');
     this.existingAttachments.set([]);
 
@@ -386,7 +403,7 @@ export class App {
         tagInputValue: '',
         attachments: [],
       });
-      this.createFlowOpen.set(true);
+      this.openEditorDialog();
       this.saveMessage.set('Review the parsed fields, attach any extra files, then save.');
     }
 
@@ -437,12 +454,18 @@ export class App {
   }
 
   protected cancelCreateProxy(): void {
-    this.resetCreateDraft();
     this.saveMessage.set('Choose an image to start creating a proxy.');
+
+    if (this.editorDialogRef) {
+      this.closeEditorDialog();
+      return;
+    }
+
+    this.resetCreateDraft();
   }
 
   protected connectGoogle(): void {
-    void this.connectGoogleAndDrive();
+    void this.connectGoogleAndDrive(true);
   }
 
   protected saveProxy(): void {
@@ -453,8 +476,12 @@ export class App {
     void this.confirmAndDeleteProxy(itemId);
   }
 
-  private async connectGoogleAndDrive(): Promise<void> {
-    await this.googleAuthService.connect();
+  protected openProxyFolder(itemId: string): void {
+    void this.openProxyFolderInDrive(itemId);
+  }
+
+  private async connectGoogleAndDrive(forceRefresh = false): Promise<void> {
+    await this.googleAuthService.connect({ force: forceRefresh });
 
     const accessToken = this.googleAuthService.accessToken();
     if (!accessToken) {
@@ -492,18 +519,9 @@ export class App {
           ? 'Created index.json in the OneProxy folder.'
           : 'Loaded existing index.json from the OneProxy folder.',
       );
-      let previewsLoaded = true;
-      try {
-        await this.refreshPreviewImages(accessToken, itemsFolder.id, indexFile.data);
-      } catch {
-        previewsLoaded = false;
-      }
-      await this.refreshItemMetrics(accessToken, itemsFolder.id, indexFile.data);
-      this.saveMessage.set(
-        previewsLoaded
-          ? 'Choose an image to start creating a proxy.'
-          : 'Metadata loaded, but one or more previews could not be loaded yet.',
-      );
+      this.saveMessage.set('Library loaded from index.json. Preview images and sizes are loading.');
+      this.isLibraryLoading.set(false);
+      void this.hydrateLibraryCards(accessToken, itemsFolder.id, indexFile.data);
     } catch (error) {
       this.oneProxyFolderId.set(null);
       this.itemsFolderId.set(null);
@@ -518,7 +536,9 @@ export class App {
       );
       this.saveMessage.set('Cannot save proxies until Drive and index.json are ready.');
     } finally {
-      this.isLibraryLoading.set(false);
+      if (this.indexStatus() !== 'ready') {
+        this.isLibraryLoading.set(false);
+      }
     }
   }
 
@@ -593,7 +613,7 @@ export class App {
       }
 
       this.resetCreateDraft(false);
-      this.createFlowOpen.set(false);
+      this.closeEditorDialog();
       this.saveMessage.set('Proxy and attachments saved. The grid has been refreshed.');
     } catch (error) {
       this.saveMessage.set(
@@ -702,9 +722,7 @@ export class App {
       });
 
       this.resetCreateDraft(false);
-      this.createFlowOpen.set(false);
-      this.editorMode.set('create');
-      this.editingOriginalItemId.set(null);
+      this.closeEditorDialog();
       this.saveMessage.set('Proxy updated. New attachments were added and the grid has been refreshed.');
     } catch (error) {
       this.saveMessage.set(
@@ -814,6 +832,68 @@ export class App {
     return null;
   }
 
+  private async openProxyFolderInDrive(itemId: string): Promise<void> {
+    const accessToken = this.googleAuthService.accessToken();
+    const itemsFolderId = this.itemsFolderId();
+    const item = this.indexRecord()?.items.find((entry) => entry.id === itemId);
+
+    if (!accessToken || !itemsFolderId || !item) {
+      this.saveMessage.set('Reconnect Google and reload Drive metadata before opening a folder.');
+      return;
+    }
+
+    this.openingFolderItemIds.update((ids) => [...ids, itemId]);
+
+    try {
+      const itemFolder = await this.googleDriveService.getItemFolder(accessToken, itemsFolderId, itemId);
+      if (!itemFolder) {
+        throw new Error(`Could not find the Drive folder for ${itemId}.`);
+      }
+
+      window.open(`https://drive.google.com/drive/folders/${itemFolder.id}`, '_blank', 'noopener');
+    } catch (error) {
+      this.saveMessage.set(
+        error instanceof Error ? error.message : `Failed to open the folder for ${item.name}.`,
+      );
+    } finally {
+      this.openingFolderItemIds.update((ids) => ids.filter((id) => id !== itemId));
+    }
+  }
+
+  private async hydrateLibraryCards(
+    accessToken: string,
+    itemsFolderId: string,
+    indexRecord: OneProxyIndexRecord,
+  ): Promise<void> {
+    this.arePreviewsLoading.set(true);
+    this.areMetricsLoading.set(true);
+
+    const [previewsResult, metricsResult] = await Promise.allSettled([
+      this.refreshPreviewImages(accessToken, itemsFolderId, indexRecord),
+      this.refreshItemMetrics(accessToken, itemsFolderId, indexRecord),
+    ]);
+
+    this.arePreviewsLoading.set(false);
+    this.areMetricsLoading.set(false);
+
+    if (previewsResult.status === 'rejected' && metricsResult.status === 'rejected') {
+      this.saveMessage.set('Library loaded, but preview images and size data could not be refreshed.');
+      return;
+    }
+
+    if (previewsResult.status === 'rejected') {
+      this.saveMessage.set('Library loaded. Size data is ready, but one or more previews could not be loaded.');
+      return;
+    }
+
+    if (metricsResult.status === 'rejected') {
+      this.saveMessage.set('Library loaded. Preview images are ready, but size data could not be loaded.');
+      return;
+    }
+
+    this.saveMessage.set('Library is ready.');
+  }
+
   private async uploadAttachments(
     accessToken: string,
     itemFolderId: string,
@@ -873,7 +953,7 @@ export class App {
 
   private resetCreateDraft(revokePreview = true): void {
     const previewUrl = this.createDraft().imagePreviewUrl;
-    if (revokePreview && previewUrl && previewUrl.startsWith('blob:')) {
+    if (revokePreview && this.shouldRevokeDraftPreview(previewUrl)) {
       URL.revokeObjectURL(previewUrl);
     }
 
@@ -884,6 +964,41 @@ export class App {
     this.createFlowOpen.set(false);
     this.editorMode.set('create');
     this.editingOriginalItemId.set(null);
+  }
+
+  private shouldRevokeDraftPreview(previewUrl: string | null): previewUrl is string {
+    if (!previewUrl || !previewUrl.startsWith('blob:')) {
+      return false;
+    }
+
+    return !Object.values(this.itemPreviewUrls()).includes(previewUrl);
+  }
+
+  private openEditorDialog(): void {
+    this.createFlowOpen.set(true);
+
+    if (this.editorDialogRef || !this.proxyEditorDialog) {
+      return;
+    }
+
+    this.editorDialogRef = this.dialog.open(this.proxyEditorDialog, {
+      width: 'min(1080px, calc(100vw - 32px))',
+      maxWidth: '1080px',
+      panelClass: 'proxy-editor-dialog-panel',
+    });
+
+    this.editorDialogRef.afterClosed().subscribe(() => {
+      this.editorDialogRef = null;
+      if (this.createFlowOpen()) {
+        this.resetCreateDraft();
+      }
+    });
+  }
+
+  private closeEditorDialog(): void {
+    const dialogRef = this.editorDialogRef;
+    this.editorDialogRef = null;
+    dialogRef?.close();
   }
 
   private createEmptyDraft(): CreateProxyDraft {
@@ -1006,23 +1121,17 @@ export class App {
     itemsFolderId: string,
     indexRecord: OneProxyIndexRecord,
   ): Promise<void> {
-    this.areMetricsLoading.set(true);
+    const metricsEntries = await Promise.all(
+      indexRecord.items.map(async (item) => {
+        const metrics = await this.googleDriveService.getItemMetrics(
+          accessToken,
+          itemsFolderId,
+          item.id,
+        );
+        return [item.id, metrics] as const;
+      }),
+    );
 
-    try {
-      const metricsEntries = await Promise.all(
-        indexRecord.items.map(async (item) => {
-          const metrics = await this.googleDriveService.getItemMetrics(
-            accessToken,
-            itemsFolderId,
-            item.id,
-          );
-          return [item.id, metrics] as const;
-        }),
-      );
-
-      this.itemMetrics.set(Object.fromEntries(metricsEntries));
-    } finally {
-      this.areMetricsLoading.set(false);
-    }
+    this.itemMetrics.set(Object.fromEntries(metricsEntries));
   }
 }

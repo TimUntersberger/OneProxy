@@ -170,72 +170,31 @@
   display: none;
 }
 
-.composer-card {
-  margin-bottom: 1.25rem;
-  border-color: rgba(80, 56, 40, 0.14);
-  background: rgba(255, 249, 241, 0.82);
+.composer-dialog {
+  padding: 1.5rem;
+  background:
+    radial-gradient(circle at top left, rgba(214, 77, 24, 0.08), transparent 24%),
+    linear-gradient(180deg, rgba(255, 249, 241, 0.98), rgba(251, 245, 236, 0.98));
 }
 
-.auth-state {
-  margin-bottom: 1.25rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid rgba(80, 56, 40, 0.12);
-}
-
-.auth-label {
-  margin: 0;
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: #8a6e5e;
-}
-
-.auth-value {
-  margin: 0.3rem 0 0;
-  font-size: 1.1rem;
-  font-weight: 700;
-  text-transform: capitalize;
-}
-
-.auth-value-idle,
-.auth-value-connecting {
-  color: #1a618f;
-}
-
-.auth-value-connected {
-  color: #2f7a39;
-}
-
-.auth-value-error {
-  color: #b23429;
-}
-
-.auth-help,
-.auth-error {
-  margin: 0.65rem 0 0;
-  line-height: 1.45;
-}
-
-.auth-help {
-  color: #5e5147;
-}
-
-.auth-error {
-  color: #8d2e24;
-}
-
-.scope-list {
+.composer-dialog-header {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-top: 0.85rem;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: start;
+  margin-bottom: 1.25rem;
 }
 
-.folder-meta {
-  margin: 0.65rem 0 0;
+.composer-dialog-header h2 {
+  margin: 0;
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.composer-dialog-header p {
+  margin: 0.45rem 0 0;
   color: #5e5147;
-  font-size: 0.88rem;
-  word-break: break-all;
 }
 
 .controls {
@@ -370,6 +329,14 @@
   background: rgba(255, 255, 255, 0.65);
 }
 
+.attachment-row-skeleton {
+  pointer-events: none;
+}
+
+.attachment-copy-skeleton {
+  flex: 1 1 auto;
+}
+
 .attachment-name,
 .attachment-size {
   margin: 0;
@@ -390,6 +357,22 @@
   font-size: 0.88rem;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.attachment-status-uploading {
+  color: #8c4f1a;
+}
+
+.attachment-status-skeleton {
+  width: 84px;
+  height: 1.8rem;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.attachment-skeleton-line {
+  width: 42%;
+  margin-bottom: 0;
 }
 
 .attachment-actions {
@@ -475,6 +458,11 @@
   object-fit: cover;
 }
 
+.card-preview-skeleton {
+  width: 100%;
+  height: 100%;
+}
+
 .library-card mat-card-content {
   display: flex;
   flex: 1 1 auto;
@@ -503,7 +491,7 @@
 }
 
 .card-action-button {
-  flex: 1 1 0;
+  flex: 1 1 120px;
   min-width: 0;
   padding-inline: 0.75rem;
   border-radius: 999px;
@@ -527,6 +515,12 @@
   color: #6c5b4d;
   font-size: 0.84rem;
   line-height: 1.35;
+}
+
+.card-size-skeleton {
+  display: block;
+  width: 68%;
+  margin-bottom: 0;
 }
 
 .library-card mat-chip-set {
@@ -586,6 +580,10 @@
   .composer-grid {
     grid-template-columns: 1fr;
   }
+
+  .composer-dialog {
+    padding: 1rem;
+  }
 }
 
 @media (max-width: 640px) {
@@ -607,6 +605,10 @@
 
   .composer-actions {
     flex-direction: column;
+  }
+
+  .composer-dialog-header {
+    margin-bottom: 1rem;
   }
 
   .composer-file-row {
